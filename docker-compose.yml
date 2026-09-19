@@ -1,0 +1,56 @@
+# Control-plane stack. Nodes are NOT part of this compose file — they are separate
+# machines running only the agent, and they dial in to the gateway.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: deers
+      POSTGRES_PASSWORD: deers
+      POSTGRES_DB: deers
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deers"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redisdata:/data"]
+    ports: ["6379:6379"]
+
+  panel:
+    build: { context: ., dockerfile: apps/panel/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://deers:deers@postgres:5432/deers
+      REDIS_URL: redis://redis:6379
+      PUBLIC_GATEWAY_URL: ${PUBLIC_GATEWAY_URL}
+      PUBLIC_GATEWAY_WS: ${PUBLIC_GATEWAY_WS}
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["3000:3000"]
+
+  gateway:
+    build: { context: ., dockerfile: apps/gateway/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://deers:deers@postgres:5432/deers
+      REDIS_URL: redis://redis:6379
+      GATEWAY_PORT: 8080
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8080:8080"]
+
+  worker:
+    build: { context: ., dockerfile: apps/worker/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://deers:deers@postgres:5432/deers
+      REDIS_URL: redis://redis:6379
+      BILLING_GRACE_DAYS: 3
+      BILLING_RETENTION_DAYS: 14
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:
