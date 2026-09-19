@@ -1,0 +1,22 @@
+{
+  "name": "@deers/worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@deers/shared": "*",
+    "@prisma/client": "^6.2.0",
+    "ioredis": "^5.4.1",
+    "nanoid": "^5.0.9",
+    "mysql2": "^3.11.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

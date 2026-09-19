@@ -1,0 +1,28 @@
+{
+  "name": "@deers/agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/agent.cjs"
+  },
+  "dependencies": {
+    "@deers/shared": "*",
+    "dockerode": "^4.0.2",
+    "tar-fs": "^3.0.6",
+    "ws": "^8.18.0",
+    "@aws-sdk/client-s3": "^3.717.0",
+    "@aws-sdk/lib-storage": "^3.717.0"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.32",
+    "@types/node": "^22.10.2",
+    "@types/tar-fs": "^2.0.4",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

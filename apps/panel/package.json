@@ -1,0 +1,30 @@
+{
+  "name": "@deers/panel",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3000"
+  },
+  "dependencies": {
+    "@deers/shared": "*",
+    "@prisma/client": "^6.2.0",
+    "bcryptjs": "^2.4.3",
+    "ioredis": "^5.4.1",
+    "nanoid": "^5.0.9",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.1",
+    "mysql2": "^3.11.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2"
+  }
+}

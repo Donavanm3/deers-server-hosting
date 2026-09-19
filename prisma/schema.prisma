@@ -1,0 +1,460 @@
+// DeersServerHosting — control plane schema
+// Resource accounting lives on Node: total_* / reserved_* ; available = total - reserved.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum NodeType {
+  VPS
+  DEDICATED
+  HOME
+}
+
+enum NodeStatus {
+  ONLINE
+  OFFLINE
+  UNREACHABLE
+}
+
+enum ServerStatus {
+  PROVISIONING
+  INSTALLING
+  OFFLINE
+  STARTING
+  RUNNING
+  STOPPING
+  CRASHED
+  SUSPENDED
+  DELETING
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROVISIONED
+  CANCELLED
+  FAILED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  role         UserRole @default(CUSTOMER)
+  createdAt    DateTime @default(now())
+
+  servers  Server[]
+  orders   Order[]
+  subuser  Subuser[]
+  sessions Session[]
+  audit    AuditLog[]
+  invoices Invoice[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// A machine that can run game servers. VPS, dedicated, or a home box behind NAT.
+/// Nodes never receive inbound connections from the control plane — the agent dials out.
+model Node {
+  id       String     @id @default(uuid())
+  name     String     @unique
+  hostname String // informational / SFTP display only, may be a private address
+  location String
+  type     NodeType   @default(VPS)
+  status   NodeStatus @default(OFFLINE)
+
+  /// Admin kill-switch. Disabled nodes keep running existing servers but take no new ones.
+  enabled Boolean @default(true)
+
+  totalMemoryMb Int
+  totalDiskMb   Int
+  totalCpuCores Float
+
+  /// Sum of plan allocations placed on this node. Never derived at read time.
+  reservedMemoryMb Int   @default(0)
+  reservedDiskMb   Int   @default(0)
+  reservedCpuCores Float @default(0)
+
+  /// Headroom kept for the OS / agent / docker daemon itself.
+  overheadMemoryMb Int @default(1024)
+  overheadDiskMb   Int @default(10240)
+
+  /// bcrypt hash of the agent token. The plaintext is shown once at creation.
+  agentTokenHash String
+  agentVersion   String?
+  lastHeartbeat  DateTime?
+
+  /// Last reported live telemetry (not used for scheduling — reservations are).
+  liveCpuPercent Float?
+  liveMemoryMb   Int?
+  liveDiskMb     Int?
+
+  daemonPortRangeStart Int @default(25565)
+  daemonPortRangeEnd   Int @default(25700)
+
+  createdAt DateTime @default(now())
+
+  servers        Server[]
+  allocations    Allocation[]
+  templates      NodeTemplate[]
+  migrationsFrom MigrationJob[] @relation("MigrationSource")
+  migrationsTo   MigrationJob[] @relation("MigrationTarget")
+  databaseHosts  DatabaseHost[]
+
+  @@index([status, enabled])
+}
+
+/// Which game templates a node is allowed to host (image pre-pulled, arch compatible...).
+model NodeTemplate {
+  nodeId     String
+  templateId String
+  node       Node         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  template   GameTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@id([nodeId, templateId])
+}
+
+model GameTemplate {
+  id          String  @id @default(uuid())
+  key         String  @unique // "minecraft-java", "minecraft-bedrock", "valheim"
+  name        String
+  dockerImage String
+  startCommand String
+  stopCommand String  @default("stop")
+  /// JSON: [{ key, label, default, editable }] surfaced on the Startup page.
+  variables   Json    @default("[]")
+  /// Regex the console is matched against to flip a server to RUNNING.
+  readyRegex  String?
+  enabled     Boolean @default(true)
+
+  servers Server[]
+  plans   Plan[]
+  nodes   NodeTemplate[]
+}
+
+model Plan {
+  id             String  @id @default(uuid())
+  name           String
+  memoryMb       Int
+  diskMb         Int
+  cpuCores       Float
+  backupMb       Int     @default(0)
+  databaseLimit  Int     @default(0)
+  allocationLimit Int    @default(1)
+  monthlyPriceCents Int
+  currency       String  @default("USD")
+  templateId     String?
+  template       GameTemplate? @relation(fields: [templateId], references: [id])
+  visible        Boolean @default(true)
+
+  orders  Order[]
+  servers Server[]
+}
+
+model Order {
+  id        String      @id @default(uuid())
+  userId    String
+  planId    String
+  status    OrderStatus @default(PENDING)
+  /// Set when provisioning succeeds; lets us make purchase → provision idempotent.
+  serverId  String?     @unique
+  failureReason String?
+  createdAt DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([userId])
+}
+
+model Server {
+  id       String       @id @default(uuid())
+  /// Short human id used as the container name: deers-<shortId>
+  shortId  String       @unique
+  name     String
+  ownerId  String
+  nodeId   String
+  planId   String
+  templateId String
+  status   ServerStatus @default(PROVISIONING)
+
+  /// Denormalised from the plan at purchase time; the plan may change later,
+  /// the reservation on the node must not.
+  memoryMb Int
+  diskMb   Int
+  cpuCores Float
+
+  containerId String?
+  environment Json     @default("{}")
+  suspended   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  owner       User         @relation(fields: [ownerId], references: [id])
+  node        Node         @relation(fields: [nodeId], references: [id])
+  plan        Plan         @relation(fields: [planId], references: [id])
+  template    GameTemplate @relation(fields: [templateId], references: [id])
+  allocations Allocation[]
+  backups     Backup[]
+  subusers    Subuser[]
+  invoices    Invoice[]
+  metrics     ServerMetric[]
+  schedules   BackupSchedule[]
+  migrations  MigrationJob[]
+  databases   ServerDatabase[]
+
+  @@index([ownerId])
+  @@index([nodeId])
+}
+
+model Allocation {
+  id       String  @id @default(uuid())
+  nodeId   String
+  ip       String
+  port     Int
+  serverId String?
+  primary  Boolean @default(false)
+
+  node   Node    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  server Server? @relation(fields: [serverId], references: [id], onDelete: SetNull)
+
+  @@unique([nodeId, ip, port])
+  @@index([serverId])
+}
+
+model Subuser {
+  id          String   @id @default(uuid())
+  serverId    String
+  userId      String
+  permissions String[]
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, userId])
+}
+
+enum BackupLocation {
+  NODE
+  OBJECT_STORE
+}
+
+model Backup {
+  id        String   @id @default(uuid())
+  serverId  String
+  name      String
+  bytes     BigInt   @default(0)
+  checksum  String?
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  /// NODE means the archive sits on the node's disk and dies with it.
+  /// OBJECT_STORE means it has been uploaded and survives node loss.
+  location  BackupLocation @default(NODE)
+  objectKey String?
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([serverId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String // "node.create", "server.delete", "node.disable"
+  targetType String
+  targetId  String
+  metadata  Json     @default("{}")
+  ip        String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  OVERDUE
+  VOID
+}
+
+/// One billing period for one server. Renewal creates the next one; a server is
+/// suspended when its invoice passes the grace period unpaid.
+model Invoice {
+  id           String        @id @default(uuid())
+  number       String        @unique
+  userId       String
+  serverId     String?
+  status       InvoiceStatus @default(OPEN)
+  amountCents  Int
+  currency     String        @default("USD")
+  periodStart  DateTime
+  periodEnd    DateTime
+  dueAt        DateTime
+  paidAt       DateTime?
+  /// Identifier from the payment processor; unique so a replayed webhook is a no-op.
+  paymentRef   String?       @unique
+  createdAt    DateTime      @default(now())
+
+  user   User    @relation(fields: [userId], references: [id])
+  server Server? @relation(fields: [serverId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([status, dueAt])
+}
+
+/// Rolled-up telemetry. The worker writes one row per server per minute and
+/// compacts anything older than 48 hours into hourly averages.
+model ServerMetric {
+  id            BigInt   @id @default(autoincrement())
+  serverId      String
+  bucket        DateTime
+  resolution    String   @default("minute") // "minute" | "hour"
+  cpuPercent    Float
+  memoryMb      Int
+  diskMb        Int
+  samples       Int      @default(1)
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, bucket, resolution])
+  @@index([serverId, bucket])
+}
+
+model BackupSchedule {
+  id         String    @id @default(uuid())
+  serverId   String
+  /// Minute-of-day in UTC, so schedules are comparable without parsing cron.
+  minuteUtc  Int
+  /// Bitmask of weekdays, Sunday = bit 0. 127 means daily.
+  daysMask   Int       @default(127)
+  keepCount  Int       @default(3)
+  enabled    Boolean   @default(true)
+  lastRunAt  DateTime?
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, minuteUtc])
+}
+
+enum MigrationStatus {
+  QUEUED
+  BACKING_UP
+  TRANSFERRING
+  RESTORING
+  SWITCHING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
+
+/// Moving a server from one node to another. Capacity on the target is reserved
+/// up front and only released from the source once the switch succeeds.
+model MigrationJob {
+  id           String          @id @default(uuid())
+  serverId     String
+  fromNodeId   String
+  toNodeId     String
+  status       MigrationStatus @default(QUEUED)
+  backupId     String?
+  failureReason String?
+  startedAt    DateTime        @default(now())
+  finishedAt   DateTime?
+
+  server   Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  fromNode Node   @relation("MigrationSource", fields: [fromNodeId], references: [id])
+  toNode   Node   @relation("MigrationTarget", fields: [toNodeId], references: [id])
+
+  @@index([status])
+}
+
+
+/// A MySQL/MariaDB server that per-customer databases are carved out of.
+/// Usually one per node, but it can be shared or external.
+model DatabaseHost {
+  id           String  @id @default(uuid())
+  name         String  @unique
+  /// Address the game container connects to. Not shown to customers verbatim
+  /// unless it is publicly routable.
+  host         String
+  port         Int     @default(3306)
+  /// Address the panel itself uses to issue CREATE DATABASE / GRANT.
+  adminHost    String
+  adminUser    String
+  /// Encrypted at rest with DATABASE_HOST_KEY; never returned by any API.
+  adminPasswordEnc String
+  nodeId       String?
+  maxDatabases Int     @default(100)
+  enabled      Boolean @default(true)
+
+  node      Node             @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  databases ServerDatabase[]
+}
+
+model ServerDatabase {
+  id         String   @id @default(uuid())
+  serverId   String
+  hostId     String
+  /// Namespaced as s<shortId>_<name> so two customers cannot collide.
+  dbName     String   @unique
+  username   String   @unique
+  /// Encrypted, and only decrypted to show the customer their own credentials.
+  passwordEnc String
+  /// CIDR the grant is scoped to. Defaults to the node's container subnet.
+  allowFrom  String   @default("%")
+  createdAt  DateTime @default(now())
+
+  server Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  host   DatabaseHost @relation(fields: [hostId], references: [id])
+
+  @@index([serverId])
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// Operational alerts. Deduplicated on `key` so a node that is down for an hour
+/// produces one open alert, not sixty.
+model Alert {
+  id         String        @id @default(uuid())
+  key        String        @unique
+  severity   AlertSeverity
+  title      String
+  detail     String
+  targetType String
+  targetId   String
+  resolvedAt DateTime?
+  notifiedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  @@index([resolvedAt, severity])
+}

@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/* DeersServerHosting panel.
+ *
+ * The subject is a rack of machines running game worlds — so the surface reads
+ * as cool blue-slate rather than tinted black, and the only saturated colours
+ * are the two that carry meaning: mint for a world that is up, coral for one
+ * that is down. Gold is reserved for the brand and the one primary action on a
+ * page, so it never competes with status.
+ */
+@theme {
+  --color-bg: #10151f;
+  --color-surface: #18202e;
+  --color-raised: #212b3c;
+  --color-line: #2e3a4f;
+  --color-line-soft: #232d3e;
+  --color-text: #e8ecf3;
+  --color-muted: #8795ab;
+  --color-mint: #52d1a4;
+  --color-mint-dim: #1d3b34;
+  --color-coral: #ff7a6b;
+  --color-coral-dim: #3a2320;
+  --color-gold: #e9b44c;
+
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-panel: 10px;
+}
+
+html {
+  background: var(--color-bg);
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv05", "ss03";
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Figures line up in columns without pushing everything into a mono face —
+   monospacing labels as well as numbers makes a panel look like a log file. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The console is genuinely a terminal, so it genuinely wants a mono face. */
+.terminal {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+::selection {
+  background: var(--color-gold);
+  color: var(--color-bg);
+}
+
+/* Scrollbars inside dark panels, so the console does not get a white gutter. */
+* {
+  scrollbar-color: var(--color-line) transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
